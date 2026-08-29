@@ -10,6 +10,17 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const modules = modulesOf(appModel)
   const isOverview = state.selectedMapId === 'overview'
 
+  /** 级别筛选：总览页点具体级别 → 直接进入该级别筛选后的第一个子系统地图
+   *  （总览树结构不随级别变化，进入地图才能看到节点被筛掉）；子系统页原地筛选 */
+  const handleLevelSelect = (level: string | null) => {
+    appModel.selectLevel(level)
+    if (isOverview && level) {
+      const mapId = appModel.firstMapForLevel(level)
+      if (mapId) appModel.selectMap(mapId)
+    }
+    onNavigate?.()
+  }
+
   return (
     <div className="sidebar">
       <h1 className="sidebar-title">知识地图</h1>
@@ -34,16 +45,13 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </section>
 
-      {/* 级别筛选（移动端选择后关闭抽屉，立即看到地图按级别变化） */}
+      {/* 级别筛选（总览点具体级别直接进入筛选后的地图；移动端选择后关闭抽屉） */}
       <section className="side-section">
         <div className="section-header">级别</div>
         <div className="chip-row">
           <button
             className={`chip ${state.selectedLevel === null ? 'active' : ''}`}
-            onClick={() => {
-              appModel.selectLevel(null)
-              onNavigate?.()
-            }}
+            onClick={() => handleLevelSelect(null)}
           >
             全部
           </button>
@@ -51,10 +59,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <button
               key={level}
               className={`chip ${state.selectedLevel === level ? 'active' : ''}`}
-              onClick={() => {
-                appModel.selectLevel(level)
-                onNavigate?.()
-              }}
+              onClick={() => handleLevelSelect(level)}
             >
               {level}
             </button>

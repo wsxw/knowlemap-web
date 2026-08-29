@@ -196,10 +196,11 @@ export class AppModel {
   }
 
   /** 从 URL 路由还原视图（刷新/前进/后退/分享链接），不产生新的历史记录 */
-  restoreFromRoute(route: { mapId: string | null; nodeId: string | null }) {
+  restoreFromRoute(route: { mapId: string | null; nodeId: string | null; level?: string | null }) {
     this.set({
       selectedMapId: route.mapId ?? OVERVIEW_ID,
       selectedNodeId: route.nodeId,
+      selectedLevel: route.level ?? null,
     })
   }
 
@@ -207,6 +208,18 @@ export class AppModel {
     // 联动：选中节点时切到它所在的地图；占位节点也允许查看
     const mapId = nodeId ? this.state.store?.mapContaining(nodeId)?.id ?? null : null
     this.set({ selectedNodeId: nodeId, selectedMapId: mapId ?? this.state.selectedMapId })
+  }
+
+  /** 按侧栏顺序找到第一个「含该级别已上线节点」的子系统（无则 null） */
+  firstMapForLevel(level: string): string | null {
+    const pack = this.pack
+    if (!pack) return null
+    for (const module of allModules(pack)) {
+      for (const map of module.subsystems) {
+        if (map.nodes.some((n) => !isComingSoon(n) && n.level.includes(level))) return map.id
+      }
+    }
+    return null
   }
 
   selectLevel(level: string | null) {

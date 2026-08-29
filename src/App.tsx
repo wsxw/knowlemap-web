@@ -106,14 +106,14 @@ export default function App() {
 
   // 视图状态变化 → 同步 hash（hash 已是目标值则不动，避免重复历史记录）
   useEffect(() => {
-    const target = hashFor(state.selectedMapId, state.selectedNodeId)
+    const target = hashFor(state.selectedMapId, state.selectedNodeId, state.selectedLevel)
     if (window.location.hash === target) return
     if (window.location.hash === '') {
       window.history.replaceState(null, '', target)
     } else {
       window.history.pushState(null, '', target)
     }
-  }, [state.selectedMapId, state.selectedNodeId])
+  }, [state.selectedMapId, state.selectedNodeId, state.selectedLevel])
 
   /** 拖动分隔条调整详情栏宽度；双击复位（仅桌面） */
   const startResize = useCallback((e: React.PointerEvent) => {
@@ -214,8 +214,11 @@ export default function App() {
     () => (currentMap && !isOverview ? appModel.filteredNodesIn(currentMap) : []),
     [currentMap, isOverview, state.selectedLevel],
   )
-  // 切换地图/级别时重置视口（对齐 Mac 版 .id() 重建语义）
-  const mapKey = `${state.selectedMapId ?? 'none'}-${state.selectedLevel ?? 'all'}`
+  // 切换地图/级别时重置视口（对齐 Mac 版 .id() 重建语义）。
+  // 总览的节点集不随级别变化，key 不含级别——切级别只更新计数，不重挂载闪屏。
+  const mapKey = isOverview
+    ? state.selectedMapId ?? 'none'
+    : `${state.selectedMapId ?? 'none'}-${state.selectedLevel ?? 'all'}`
 
   if (contentError) {
     return <ContentErrorView message={contentError} />
