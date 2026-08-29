@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { appModel, useAppState } from './useAppModel'
 import Sidebar from './components/Sidebar'
 import MapCanvas from './components/MapCanvas'
@@ -9,6 +9,7 @@ const DETAIL_WIDTH_KEY = 'knowlemap.detailWidth.v1'
 const THEME_KEY = 'knowlemap.theme.v1'
 const DETAIL_MIN = 380
 const DETAIL_MAX = 760
+const MOBILE_QUERY = '(max-width: 1080px)'
 
 type Theme = 'light' | 'dark'
 
@@ -16,6 +17,17 @@ function initialTheme(): Theme {
   const saved = localStorage.getItem(THEME_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return isMobile
 }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
@@ -30,13 +42,17 @@ function loadDetailWidth(): number {
   return saved >= DETAIL_MIN && saved <= DETAIL_MAX ? saved : defaultDetailWidth()
 }
 
-/** 根组件：三栏布局（侧栏 | 知识地图 | 节点详情）+ 可拖拽分栏 + 面包屑 + 奖励弹层 */
+/** 根组件：桌面三栏（侧栏 | 知识地图 | 节点详情）+ 移动端单屏切换 + 奖励弹层 */
 export default function App() {
   const state = useAppState()
+  const isMobile = useIsMobile()
   const shellRef = useRef<HTMLDivElement>(null)
   const [detailWidth, setDetailWidth] = useState(loadDetailWidth)
   const [resizing, setResizing] = useState(false)
   const [theme, setTheme] = useState<Theme>(initialTheme)
+  // 移动端视图状态：侧栏抽屉 / 详情滑入页
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   // 主题落到 <html data-theme>，styles.css 的变量集随之整体切换
   document.documentElement.dataset.theme = theme
@@ -49,7 +65,20 @@ export default function App() {
     })
   }, [])
 
-  /** 拖动分隔条调整详情栏宽度；双击复位 */
+  // 移动端：选中节点后详情滑入
+  const selectedId = state.selectedNodeId
+  useEffect(() => {
+    if (isMobile && selectedId) setDetailOpen(true)
+  }, [selectedId, isMobile])
+  // 切回桌面布局时复位移动端视图状态
+  useEffect(() => {
+    if (!isMobile) {
+      setDrawerOpen(false)
+      setDetailOpen(false)
+    }
+  }, [isMobile])
+
+  /** 拖动分隔条调整详情栏宽度；双击复位（仅桌面） */
   const startResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     setResizing(true)
@@ -109,15 +138,26 @@ export default function App() {
   return (
     <div
       ref={shellRef}
-      className={`app-shell ${resizing ? 'resizing' : ''}`}
+      className={`app-shell ${resizing ? 'resizing' : ''} ${drawerOpen ? 'drawer-open' : ''} ${detailOpen ? 'detail-open' : ''}`}
       style={{ '--detail-w': `${detailWidth}px` } as CSSProperties}
     >
       <aside className="sidebar-pane">
-        <Sidebar />
+        <Sidebar onNavigate={() => setDrawerOpen(false)} />
       </aside>
+      {drawerOpen && (
+        <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
 
       <section className="map-pane">
         <header className="map-control-bar">
+          <button
+            className="menu-btn"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="打开菜单"
+            title="菜单"
+          >
+            ☰
+          </button>
           {currentMap && (
             <>
               <span className="map-icon">🗺️</span>
@@ -157,6 +197,9 @@ export default function App() {
 
       <section className="detail-pane">
         <nav className="breadcrumb" aria-label="面包屑">
+          <button className="mobile-back" onClick={() => setDetailOpen(false)} aria-label="返回地图">
+            ‹ 返回
+          </button>
           {breadcrumbSegments.length > 0 ? (
             breadcrumbSegments.map((seg, i) => (
               <span key={i} className="breadcrumb-segment">

@@ -4,7 +4,7 @@ import * as engine from '../domain/learningEngine'
 import { AnimatedNumber } from '@/components/motion/animated-number'
 
 /** 侧栏：主题总进度、级别筛选、模块 → 子系统导航、成长数据 */
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const state = useAppState()
   const overall = appModel.overallProgress()
   const modules = modulesOf(appModel)
@@ -63,7 +63,10 @@ export default function Sidebar() {
                 <button
                   key={map.id}
                   className={`map-row ${selected ? 'active' : ''}`}
-                  onClick={() => appModel.selectMap(map.id)}
+                  onClick={() => {
+                    appModel.selectMap(map.id)
+                    onNavigate?.()
+                  }}
                 >
                   <span className={`map-ico ${selected ? 'on' : ''}`}>🗺️</span>
                   <span className="map-name">{map.name}</span>

@@ -139,17 +139,36 @@ export default function MapCanvas({ nodes }: Props) {
     return () => ro.disconnect()
   }, [])
 
-  // MARK: 手势（平移 + 缩放）
+  // MARK: 手势（平移 + 滚轮缩放 + 双指捏合缩放）
 
   const dragState = useRef<{ startX: number; startY: number; baseTx: number; baseTy: number; moved: boolean; pointerId: number } | null>(null)
+  // 多点触控：活动指针表 + 捏合基准（两点距离与当时视口）
+  const activePointers = useRef(new Map<number, { x: number; y: number }>())
+  const pinchState = useRef<{ baseDist: number; base: Viewport; midX: number; midY: number } | null>(null)
 
   const endDrag = () => {
     dragState.current = null
+    activePointers.current.clear()
+    pinchState.current = null
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
     // 不使用 setPointerCapture：捕获会把后续事件直接派发给 svg，
     // 节点 <g> 的 pointerup 将收不到冒泡而无法选中
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (activePointers.current.size === 2) {
+      // 进入捏合：终止单指拖拽
+      dragState.current = null
+      const [p1, p2] = [...activePointers.current.values()]
+      pinchState.current = {
+        baseDist: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)),
+        base: { ...viewportRef.current },
+        midX: (p1.x + p2.x) / 2,
+        midY: (p1.y + p2.y) / 2,
+      }
+      return
+    }
+    if (activePointers.current.size > 2) return
     const v = viewportRef.current
     dragState.current = {
       startX: e.clientX, startY: e.clientY,
@@ -160,6 +179,26 @@ export default function MapCanvas({ nodes }: Props) {
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (!activePointers.current.has(e.pointerId)) return
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    // 双指捏合：以两指中点为锚，按距离比例缩放
+    if (activePointers.current.size >= 2 && pinchState.current) {
+      const [p1, p2] = [...activePointers.current.values()]
+      const dist = Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y))
+      const midX = (p1.x + p2.x) / 2
+      const midY = (p1.y + p2.y) / 2
+      const { baseDist, base } = pinchState.current
+      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, base.scale * (dist / baseDist)))
+      const k = scale / base.scale
+      setViewport({
+        scale,
+        tx: midX - (midX - base.tx) * k,
+        ty: midY - (midY - base.ty) * k,
+      })
+      return
+    }
+
     const d = dragState.current
     if (!d || e.pointerId !== d.pointerId) return
     const dx = e.clientX - d.startX
@@ -172,6 +211,20 @@ export default function MapCanvas({ nodes }: Props) {
 
   /** 只有按住指针的拖拽才平移；松手一律结束拖拽状态 */
   const onPointerUp = (e: React.PointerEvent) => {
+    activePointers.current.delete(e.pointerId)
+    pinchState.current = null
+    // 双指松开一指后，剩余手指接力为单指拖拽
+    if (activePointers.current.size === 1) {
+      const [pid, p] = [...activePointers.current.entries()][0]
+      const v = viewportRef.current
+      dragState.current = {
+        startX: p.x, startY: p.y,
+        baseTx: v.tx, baseTy: v.ty,
+        moved: true, // 接力不重新判定点击
+        pointerId: pid,
+      }
+      return
+    }
     if (!dragState.current || e.pointerId === dragState.current.pointerId) {
       dragState.current = null
     }
