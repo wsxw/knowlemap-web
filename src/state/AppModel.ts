@@ -117,25 +117,31 @@ export class AppModel {
     }
   }
 
-  /** 整张主题（全部已上线节点）进度 */
+  /** 整张主题（所选级别范围内已上线的节点）进度 */
   overallProgress(): { mastered: number; total: number } {
     const pack = this.pack
     if (!pack) return { mastered: 0, total: 0 }
     return progressOver(
-      allNodes(pack).filter((n) => !isComingSoon(n)),
+      this.nodesForLevel(allNodes(pack).filter((n) => !isComingSoon(n))),
       (id) => this.isMastered(id),
     )
   }
 
   progressOfMap(map: KnowledgeMap): { mastered: number; total: number } {
-    return progressOver(map.nodes.filter((n) => !isComingSoon(n)), (id) => this.isMastered(id))
+    return progressOver(this.nodesForLevel(map.nodes.filter((n) => !isComingSoon(n))), (id) => this.isMastered(id))
   }
 
   progressOfModule(module: KnowledgeModule): { mastered: number; total: number } {
     return progressOver(
-      module.subsystems.flatMap((s) => s.nodes).filter((n) => !isComingSoon(n)),
+      this.nodesForLevel(module.subsystems.flatMap((s) => s.nodes).filter((n) => !isComingSoon(n))),
       (id) => this.isMastered(id),
     )
+  }
+
+  /** 级别筛选视图：选中级别时只保留包含该级别的节点（地图筛选与所有进度计数共用同一口径） */
+  nodesForLevel(nodes: KnowledgeNode[]): KnowledgeNode[] {
+    const lv = this.state.selectedLevel
+    return lv ? nodes.filter((n) => n.level.includes(lv)) : nodes
   }
 
   // MARK: 级别筛选

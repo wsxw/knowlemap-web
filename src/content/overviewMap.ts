@@ -85,9 +85,13 @@ export function aggregateStatus(nodes: KnowledgeNode[], profile: LearningProfile
   return anyAvailable ? 'available' : 'locked'
 }
 
-/** 模块点亮计数 */
-export function moduleMasteredCount(module: KnowledgeModule, profile: LearningProfile): number {
+/** 模块点亮计数（level 传入时只统计包含该级别的节点，与级别筛选口径一致） */
+export function moduleMasteredCount(
+  module: KnowledgeModule,
+  profile: LearningProfile,
+  level?: string | null,
+): number {
   return module.subsystems
     .flatMap((s) => s.nodes)
-    .filter((n) => !isComingSoon(n) && profile.nodeProgress[n.id]?.passed).length
+    .filter((n) => !isComingSoon(n) && (!level || n.level.includes(level)) && profile.nodeProgress[n.id]?.passed).length
 }

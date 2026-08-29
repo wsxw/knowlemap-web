@@ -165,32 +165,38 @@ export default function App() {
     const map = new Map<string, NodeStatus>()
     if (!isOverview || !store) return map
     for (const module of allModules(store.pack)) {
-      map.set(module.id, aggregateStatus(module.subsystems.flatMap((s) => s.nodes), state.profile))
+      map.set(
+        module.id,
+        aggregateStatus(appModel.nodesForLevel(module.subsystems.flatMap((s) => s.nodes)), state.profile),
+      )
     }
     map.set(
       OVERVIEW_ROOT_ID,
-      aggregateStatus(allModules(store.pack).flatMap((m) => m.subsystems.flatMap((s) => s.nodes)), state.profile),
+      aggregateStatus(
+        appModel.nodesForLevel(allModules(store.pack).flatMap((m) => m.subsystems.flatMap((s) => s.nodes))),
+        state.profile,
+      ),
     )
     return map
-  }, [isOverview, store, state.profile])
+  }, [isOverview, store, state.profile, state.selectedLevel])
 
   const currentModuleId = useMemo(
     () => (currentNode ? store?.moduleContaining(currentNode.id)?.id ?? null : null),
     [currentNode, store],
   )
 
-  /** 总览节点点亮计数（根节点 = 全主题） */
+  /** 总览节点点亮计数（根节点 = 全主题；均按所选级别收缩口径） */
   const overviewCounts = useCallback(
     (node: { id: string }): { mastered: number; total: number } => {
       if (!store) return { mastered: 0, total: 0 }
       if (node.id === OVERVIEW_ROOT_ID) return appModel.overallProgress()
       const module = allModules(store.pack).find((m) => m.id === node.id)
       if (!module) return { mastered: 0, total: 0 }
-      const total = module.subsystems.flatMap((s) => s.nodes).filter((n) => !n.comingSoon).length
-      const mastered = moduleMasteredCount(module, state.profile)
+      const total = appModel.nodesForLevel(module.subsystems.flatMap((s) => s.nodes)).filter((n) => !n.comingSoon).length
+      const mastered = moduleMasteredCount(module, state.profile, state.selectedLevel)
       return { mastered, total }
     },
-    [store, state.profile],
+    [store, state.profile, state.selectedLevel],
   )
 
   const overviewBadgeFor = useCallback(

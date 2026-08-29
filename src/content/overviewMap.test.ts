@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { loadDefaultContent } from './contentStore'
-import { OVERVIEW_ROOT_ID, buildOverviewNodes } from './overviewMap'
+import { OVERVIEW_ROOT_ID, buildOverviewNodes, moduleMasteredCount } from './overviewMap'
+import { allModules, emptyProfile } from '../domain/models'
 
 const store = loadDefaultContent()
 const nodes = buildOverviewNodes(store.pack)
@@ -65,5 +66,30 @@ describe('总览树形布局', () => {
     }
     expect(byId.get('grammar')!.layout.x).toBeLessThan(byId.get('vocabulary')!.layout.x)
     expect(byId.get('pronunciation')!.layout.x).toBeGreaterThan(byId.get('vocabulary')!.layout.x)
+  })
+})
+
+describe('级别筛选口径', () => {
+  const grammar = allModules(store.pack).find((m) => m.id === 'grammar')!
+  const grammarNodes = grammar.subsystems.flatMap((s) => s.nodes)
+  const a1Only = grammarNodes.find((n) => n.level.includes('A1') && !n.level.includes('A2'))!
+  const a2Only = grammarNodes.find((n) => n.level.includes('A2') && !n.level.includes('A1'))!
+
+  function passProfile(ids: string[]) {
+    const profile = emptyProfile()
+    for (const id of ids) {
+      profile.nodeProgress[id] = {
+        attempts: 1, bestCorrect: 1, totalQuestions: 1, passed: true, lastStudiedAt: null,
+      }
+    }
+    return profile
+  }
+
+  it('moduleMasteredCount 只统计所选级别内的点亮节点', () => {
+    const profile = passProfile([a1Only.id, a2Only.id])
+    expect(moduleMasteredCount(grammar, profile, null)).toBe(2)
+    expect(moduleMasteredCount(grammar, profile, 'A1')).toBe(1)
+    expect(moduleMasteredCount(grammar, profile, 'A2')).toBe(1)
+    expect(moduleMasteredCount(grammar, passProfile([a1Only.id]), 'A2')).toBe(0)
   })
 })
