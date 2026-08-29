@@ -26,11 +26,27 @@ const MOBILE_QUERY = '(max-width: 1080px)'
 const OVERVIEW_FORCE_PARAMS: Partial<ForceParams> = { restLength: 220, repulsion: 30000, gravity: 0 }
 
 type Theme = 'light' | 'dark'
+/** 主题模式：auto = 跟随系统夜间模式（实时），light / dark = 手动固定 */
+type ThemeMode = 'auto' | Theme
 
-function initialTheme(): Theme {
+function initialThemeMode(): ThemeMode {
   const saved = localStorage.getItem(THEME_KEY)
-  if (saved === 'light' || saved === 'dark') return saved
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  if (saved === 'light' || saved === 'dark' || saved === 'auto') return saved
+  return 'auto' // 未手动选择过 → 默认跟随系统
+}
+
+/** 系统当前是否夜间模式（初始值 + 实时监听；手机日/夜自动切换、系统外观变化都会触发 change） */
+function useSystemPrefersDark(): boolean {
+  const [prefersDark, setPrefersDark] = useState(
+    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return prefersDark
 }
 
 function useIsMobile(): boolean {
@@ -63,7 +79,10 @@ export default function App() {
   const shellRef = useRef<HTMLDivElement>(null)
   const [detailWidth, setDetailWidth] = useState(loadDetailWidth)
   const [resizing, setResizing] = useState(false)
-  const [theme, setTheme] = useState<Theme>(initialTheme)
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode)
+  const systemDark = useSystemPrefersDark()
+  // auto 模式实时跟随系统夜间模式（亮/暗切换、日落自动切换都会即时生效）
+  const theme: Theme = themeMode === 'auto' ? (systemDark ? 'dark' : 'light') : themeMode
   // 移动端视图状态：侧栏抽屉 / 详情滑入页
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -71,10 +90,13 @@ export default function App() {
   // 主题落到 <html data-theme>，styles.css 的变量集随之整体切换
   document.documentElement.dataset.theme = theme
 
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => {
-      const next: Theme = t === 'light' ? 'dark' : 'light'
-      localStorage.setItem(THEME_KEY, next)
+  /** 主题三态循环：自动跟随系统 → 亮色 → 暗色 → 自动；手动选择持久化，auto 即清除覆盖 */
+  const cycleThemeMode = useCallback(() => {
+    setThemeMode((m) => {
+      const order: ThemeMode[] = ['auto', 'light', 'dark']
+      const next = order[(order.indexOf(m) + 1) % order.length]
+      if (next === 'auto') localStorage.removeItem(THEME_KEY)
+      else localStorage.setItem(THEME_KEY, next)
       return next
     })
   }, [])
@@ -266,11 +288,17 @@ export default function App() {
           <span style={{ flex: 1 }} />
           <button
             className="theme-toggle"
-            onClick={toggleTheme}
-            title={theme === 'light' ? '切换到暗色模式' : '切换到亮色模式'}
+            onClick={cycleThemeMode}
+            title={
+              themeMode === 'auto'
+                ? '主题：跟随系统（点击切换亮色）'
+                : themeMode === 'light'
+                  ? '主题：亮色（点击切换暗色）'
+                  : '主题：暗色（点击恢复自动跟随系统）'
+            }
             aria-label="切换主题"
           >
-            {theme === 'light' ? '🌙' : '☀️'}
+            {themeMode === 'auto' ? '🌗' : theme === 'light' ? '🌙' : '☀️'}
           </button>
         </header>
         {isOverview ? (
