@@ -132,7 +132,8 @@ body {
   font-size: 14px;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
-button { font-family: inherit; }
+/* 按钮默认不继承文字颜色（UA 默认纯黑），夜间模式会露出黑字——统一继承主题色 */
+button { font-family: inherit; color: inherit; }
 
 .caption { font-size: 12px; color: var(--text-secondary); margin: 2px 0; }
 .block { display: block; }
