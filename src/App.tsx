@@ -12,6 +12,7 @@ import {
   moduleMasteredCount,
 } from './content/overviewMap'
 import { allModules, type NodeStatus } from './domain/models'
+import { hashFor, parseHash } from './routing'
 
 const DETAIL_WIDTH_KEY = 'knowlemap.detailWidth.v1'
 const THEME_KEY = 'knowlemap.theme.v1'
@@ -85,6 +86,29 @@ export default function App() {
       setDetailOpen(false)
     }
   }, [isMobile])
+
+  // MARK: hash 路由（视图状态进 URL：刷新/分享/前进后退都能还原）
+
+  // 初始化 + 监听 hash 变化（浏览器前进/后退、手动改地址）
+  useEffect(() => {
+    const apply = () => {
+      appModel.restoreFromRoute(parseHash(window.location.hash, appModel.getSnapshot().store))
+    }
+    apply()
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
+  }, [])
+
+  // 视图状态变化 → 同步 hash（hash 已是目标值则不动，避免重复历史记录）
+  useEffect(() => {
+    const target = hashFor(state.selectedMapId, state.selectedNodeId)
+    if (window.location.hash === target) return
+    if (window.location.hash === '') {
+      window.history.replaceState(null, '', target)
+    } else {
+      window.history.pushState(null, '', target)
+    }
+  }, [state.selectedMapId, state.selectedNodeId])
 
   /** 拖动分隔条调整详情栏宽度；双击复位（仅桌面） */
   const startResize = useCallback((e: React.PointerEvent) => {

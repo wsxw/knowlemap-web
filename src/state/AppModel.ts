@@ -189,6 +189,14 @@ export class AppModel {
     this.set({ selectedMapId: OVERVIEW_ID })
   }
 
+  /** 从 URL 路由还原视图（刷新/前进/后退/分享链接），不产生新的历史记录 */
+  restoreFromRoute(route: { mapId: string | null; nodeId: string | null }) {
+    this.set({
+      selectedMapId: route.mapId ?? OVERVIEW_ID,
+      selectedNodeId: route.nodeId,
+    })
+  }
+
   selectNode(nodeId: string | null) {
     // 联动：选中节点时切到它所在的地图；占位节点也允许查看
     const mapId = nodeId ? this.state.store?.mapContaining(nodeId)?.id ?? null : null
