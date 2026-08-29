@@ -86,6 +86,19 @@ export const badgeCatalog: Badge[] = [
   { id: 'tense-conqueror', name: '时态征服者', icon: '⏳', description: '掌握时态系统全部节点' },
   { id: 'grammar-master', name: '语法大师', icon: '🧩', description: '掌握语法模块全部已上线节点' },
   { id: 'a1-master', name: 'A1 大师', icon: '🏆', description: '点亮全部已上线的 A1 节点' },
+  { id: 'b1-master', name: 'B1 大师', icon: '🥇', description: '点亮全部已上线的 B1 节点' },
+  { id: 'b2-master', name: 'B2 大师', icon: '🛡️', description: '点亮全部已上线的 B2 节点' },
+  { id: 'c1-master', name: 'C1 大师', icon: '🎯', description: '点亮全部已上线的 C1 节点' },
+  { id: 'c2-master', name: 'C2 大师', icon: '👑', description: '点亮全部已上线的 C2 节点' },
+]
+
+/** 级别大师徽章：点亮该级别全部已上线节点 */
+const LEVEL_BADGES: { id: string; level: string }[] = [
+  { id: 'a1-master', level: 'A1' },
+  { id: 'b1-master', level: 'B1' },
+  { id: 'b2-master', level: 'B2' },
+  { id: 'c1-master', level: 'C1' },
+  { id: 'c2-master', level: 'C2' },
 ]
 
 function badge(id: string): Badge {
@@ -120,9 +133,12 @@ export function evaluateBadges(profile: LearningProfile, pack: ContentPack): Bad
     }
   }
 
-  const a1Ids = studyableNodes(pack).filter((n) => n.level.includes('A1')).map((n) => n.id)
-  if (a1Ids.length > 0 && a1Ids.every((id) => mastered.has(id))) {
-    earned.push(badge('a1-master'))
+  // 级别大师徽章：点亮该级别全部已上线节点（A1–C2 循环判定）
+  for (const { id, level } of LEVEL_BADGES) {
+    const levelIds = studyableNodes(pack).filter((n) => n.level.includes(level)).map((n) => n.id)
+    if (levelIds.length > 0 && levelIds.every((nid) => mastered.has(nid))) {
+      earned.push(badge(id))
+    }
   }
 
   return earned

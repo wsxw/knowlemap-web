@@ -223,12 +223,14 @@ describe('内容包加载与校验', () => {
     expect(() => loadDefaultContent()).not.toThrow()
   })
 
-  it('v1.2 全量课程规模：60 节点 / 240 题，schema v2', () => {
+  it('v2.0 全量课程规模：116 节点 / 464 题，覆盖 A1-C2 六个级别，schema v2', () => {
     expect(contentJson.schemaVersion).toBe(2)
     const nodes = store.pack.domains.flatMap((d) => d.modules.flatMap((m) => m.subsystems.flatMap((s) => s.nodes)))
-    expect(nodes.length).toBe(60)
+    expect(nodes.length).toBe(116)
     const questionCount = nodes.reduce((sum, n) => sum + n.quiz.questions.length, 0)
-    expect(questionCount).toBe(240)
+    expect(questionCount).toBe(464)
+    const levels = new Set(nodes.flatMap((n) => n.level))
+    expect([...levels].sort()).toEqual(['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
   })
 
   it('索引查询：node/mapContaining/breadcrumb/downstream', () => {

@@ -37,7 +37,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           title="查看英语总览地图"
         >
           <span className="theme-name">🇬🇧 英语</span>
-          <span className="level-chip">A1–A2</span>
+          <span className="level-chip">A1–C2</span>
         </button>
         <ProgressBar value={engine.overallProgress(overall.mastered, overall.total)} />
         <div className="caption">

@@ -41,9 +41,9 @@ describe('hash 路由', () => {
       nodeId: null,
       level: null,
     })
-    // 非法级别段不是内容包里的级别 → 当作节点 id 处理（查无此节点则丢弃）
-    expect(parseHash('#/tense_system/C1', store)).toEqual({ mapId: 'tense_system', nodeId: null, level: null })
-    expect(parseHash('#/tense_system/C1/present_simple', store)).toEqual({
+    // 非法级别段不在内容包里 → 当作节点 id 处理（查无此节点则丢弃）
+    expect(parseHash('#/tense_system/Z9', store)).toEqual({ mapId: 'tense_system', nodeId: null, level: null })
+    expect(parseHash('#/tense_system/Z9/present_simple', store)).toEqual({
       mapId: 'tense_system',
       nodeId: null,
       level: null,
