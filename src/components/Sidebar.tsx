@@ -34,13 +34,16 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </section>
 
-      {/* 级别筛选 */}
+      {/* 级别筛选（移动端选择后关闭抽屉，立即看到地图按级别变化） */}
       <section className="side-section">
         <div className="section-header">级别</div>
         <div className="chip-row">
           <button
             className={`chip ${state.selectedLevel === null ? 'active' : ''}`}
-            onClick={() => appModel.selectLevel(null)}
+            onClick={() => {
+              appModel.selectLevel(null)
+              onNavigate?.()
+            }}
           >
             全部
           </button>
@@ -48,7 +51,10 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <button
               key={level}
               className={`chip ${state.selectedLevel === level ? 'active' : ''}`}
-              onClick={() => appModel.selectLevel(level)}
+              onClick={() => {
+                appModel.selectLevel(level)
+                onNavigate?.()
+              }}
             >
               {level}
             </button>
