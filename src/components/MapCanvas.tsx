@@ -156,6 +156,9 @@ export default function MapCanvas({
   const [forcePositions, setForcePositions] = useState<Record<string, ForcePoint>>({})
   const positionsRef = useRef(forcePositions)
   positionsRef.current = forcePositions
+  // 进入页面后的首次沉降：自动适配窗口（之后用户手动拖动的沉降不再打扰视角）
+  const initialSettleDone = useRef(false)
+  const fitRef = useRef<() => void>(() => {})
   // 拖拽中的节点：钉在光标上，邻居经弹簧联动
   const pinnedRef = useRef<{ id: string; moved: boolean; startX: number; startY: number; content: ForcePoint; node: KnowledgeNode } | null>(null)
   const nodesRef = useRef(nodes)
@@ -228,6 +231,11 @@ export default function MapCanvas({
       } else {
         rafRef.current = undefined
         persistPositions()
+        // 首次沉降（进入页面）：自动适配窗口；之后的沉降不干扰用户视角
+        if (!initialSettleDone.current) {
+          initialSettleDone.current = true
+          fitRef.current()
+        }
       }
     }
     rafRef.current = requestAnimationFrame(stepFrame)
@@ -285,6 +293,8 @@ export default function MapCanvas({
       ty: size.h / 2 - rect.y * scale - (rect.height * scale) / 2,
     })
   }, [force, nodes, NW, NH, size.w, size.h])
+
+  fitRef.current = fit
 
   useEffect(() => {
     fit()
