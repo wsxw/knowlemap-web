@@ -14,6 +14,7 @@ import {
   emptyProfile,
 } from '../domain/models'
 import * as engine from '../domain/learningEngine'
+import { aggregateStatus, buildOverviewNodes, moduleMasteredCount } from '../content/overviewMap'
 import { loadDefaultContent } from '../content/contentStore'
 import contentJson from '../data/content.json'
 
@@ -57,7 +58,11 @@ function makePack(): ContentPack {
   const funcMap: KnowledgeMap = {
     id: 'function_nodes',
     name: '日常交际功能',
-    nodes: [makeNode('greetings_personal_info'), makeNode('daily_routine_description')],
+    // 跨模块前置：语法 present_simple → 功能两节点（总览图应聚合成 grammar→functions 边）
+    nodes: [
+      makeNode('greetings_personal_info', ['present_simple']),
+      makeNode('daily_routine_description', ['present_simple']),
+    ],
   }
   const grammar: KnowledgeModule = { id: 'grammar', name: '语法', subsystems: [tenseMap] }
   const functions: KnowledgeModule = { id: 'functions', name: '功能', subsystems: [funcMap] }
@@ -174,6 +179,42 @@ describe('填空答案归一化', () => {
 })
 
 // MARK: Web 版新增——真实内容包校验
+
+describe('总览地图构建与聚合状态', () => {
+  const pack = makePack()
+
+  it('根「英语」扇出指向全部模块，跨模块前置聚合为模块边', () => {
+    const nodes = buildOverviewNodes(pack)
+    expect(nodes[0].id).toBe('en')
+    expect(nodes[0].prerequisites).toEqual([])
+    const grammar = nodes.find((n) => n.id === 'grammar')!
+    expect(grammar.prerequisites).toEqual(['en'])
+    const functions = nodes.find((n) => n.id === 'functions')!
+    expect(functions.prerequisites).toEqual(['en', 'grammar'])
+  })
+
+  it('聚合状态：未开始=可学习/未解锁，部分点亮=进行中，全点亮=已掌握', () => {
+    const profile = emptyProfile()
+    const grammarNodes = pack.domains[0].modules[0].subsystems[0].nodes
+    const functionsNodes = pack.domains[0].modules[1].subsystems[0].nodes
+    expect(aggregateStatus(grammarNodes, profile)).toBe('available')
+    expect(aggregateStatus(functionsNodes, profile)).toBe('locked') // 前置 present_simple 未掌握
+
+    pass(profile, 'greetings_personal_info', 4, 4)
+    expect(aggregateStatus(functionsNodes, profile)).toBe('inProgress') // 部分点亮
+
+    pass(profile, 'daily_routine_description', 4, 4)
+    expect(aggregateStatus(functionsNodes, profile)).toBe('mastered')
+  })
+
+  it('模块点亮计数', () => {
+    const profile = emptyProfile()
+    const functions = pack.domains[0].modules[1]
+    expect(moduleMasteredCount(functions, profile)).toBe(0)
+    pass(profile, 'greetings_personal_info', 4, 4)
+    expect(moduleMasteredCount(functions, profile)).toBe(1)
+  })
+})
 
 describe('内容包加载与校验', () => {
   const store = loadDefaultContent()

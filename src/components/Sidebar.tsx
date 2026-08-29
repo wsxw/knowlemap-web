@@ -8,18 +8,26 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const state = useAppState()
   const overall = appModel.overallProgress()
   const modules = modulesOf(appModel)
+  const isOverview = state.selectedMapId === 'overview'
 
   return (
     <div className="sidebar">
       <h1 className="sidebar-title">知识地图</h1>
 
-      {/* 学习主题总进度 */}
+      {/* 学习主题总进度（点击 → 英语总览地图） */}
       <section className="side-section">
         <div className="section-header">学习主题</div>
-        <div className="theme-row">
+        <button
+          className={`theme-row theme-btn ${isOverview ? 'active' : ''}`}
+          onClick={() => {
+            appModel.selectOverview()
+            onNavigate?.()
+          }}
+          title="查看英语总览地图"
+        >
           <span className="theme-name">🇬🇧 英语</span>
           <span className="level-chip">A1–A2</span>
-        </div>
+        </button>
         <ProgressBar value={engine.overallProgress(overall.mastered, overall.total)} />
         <div className="caption">
           已点亮 {overall.mastered} / {overall.total} 个节点

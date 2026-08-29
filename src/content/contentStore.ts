@@ -116,6 +116,10 @@ export class ContentStore {
     return this.nodeToMap.get(nodeId)
   }
 
+  moduleContaining(nodeId: string): KnowledgeModule | undefined {
+    return this.nodeToModule.get(nodeId)
+  }
+
   /** 直接下游节点（以 nodeId 为前置的节点，含跨模块） */
   downstream(nodeId: string): KnowledgeNode[] {
     return allNodes(this.pack).filter((n) => n.prerequisites.includes(nodeId))

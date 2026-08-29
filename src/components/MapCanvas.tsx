@@ -99,10 +99,18 @@ function statusBadge(status: NodeStatus): string | null {
 
 interface Props {
   nodes: KnowledgeNode[]
+  /** 总览模式：覆盖节点状态推导（合成节点没有真实进度记录） */
+  statusFor?: (node: KnowledgeNode) => NodeStatus
+  /** 总览模式：覆盖状态角标文案（如模块的「3/30」点亮计数） */
+  badgeFor?: (node: KnowledgeNode, status: NodeStatus) => string | null
+  /** 总览模式：额外高亮环（📍 当前所在模块） */
+  activeId?: string | null
+  /** 总览模式：节点点击回调（点模块 → 进入该子系统地图） */
+  onNodeClick?: (node: KnowledgeNode) => void
 }
 
 /** 知识地图：SVG 自绘，圆点网格 + 贝塞尔学习路径 + 游戏风节点 + 平移缩放 */
-export default function MapCanvas({ nodes }: Props) {
+export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNodeClick }: Props) {
   useAppState() // 订阅进度变化以重绘节点状态
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -323,11 +331,13 @@ export default function MapCanvas({ nodes }: Props) {
 
           {/* 节点：外层 g 定位，内层 g 承担 hover/选中动效（CSS transform 不与定位属性冲突） */}
           {[...nodes].reverse().map((node) => {
-            const status = appModel.statusOf(node)
-            const isSelected = appModel.getSnapshot().selectedNodeId === node.id
+            const status = statusFor ? statusFor(node) : appModel.statusOf(node)
+            const isSelected = activeId !== undefined
+              ? node.id === activeId
+              : appModel.getSnapshot().selectedNodeId === node.id
             const colored = COLORED_STATUSES.includes(status)
             const lockedOrSoon = status === 'locked' || status === 'comingSoon'
-            const badge = statusBadge(status)
+            const badge = badgeFor ? badgeFor(node, status) : statusBadge(status)
             return (
               <g key={node.id} transform={`translate(${node.layout.x} ${node.layout.y})`}>
                 <g
@@ -335,7 +345,8 @@ export default function MapCanvas({ nodes }: Props) {
                   onPointerUp={() => {
                     // 不阻断冒泡：让 svg 的 onPointerUp 结束拖拽状态
                     if (!dragState.current?.moved) {
-                      appModel.selectNode(node.id)
+                      if (onNodeClick) onNodeClick(node)
+                      else appModel.selectNode(node.id)
                     }
                   }}
                   style={{ cursor: 'pointer' }}

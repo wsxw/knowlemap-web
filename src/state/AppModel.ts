@@ -1,6 +1,7 @@
 // 全局应用模型：框架无关的外部 store，React 通过 useSyncExternalStore 订阅
 // （职责与 macOS 版 KnowleMapApp/AppModel.swift 一致）
 import { ContentStore, loadDefaultContent } from '../content/contentStore'
+import { OVERVIEW_ID } from '../content/overviewMap'
 import {
   Badge,
   ContentPack,
@@ -182,6 +183,11 @@ export class AppModel {
       selectedMapId: mapId,
       selectedNodeId: keep ? this.state.selectedNodeId : null,
     })
+  }
+
+  /** 切到「英语」总览地图（保留节点选中态，供总览标注当前位置） */
+  selectOverview() {
+    this.set({ selectedMapId: OVERVIEW_ID })
   }
 
   selectNode(nodeId: string | null) {
