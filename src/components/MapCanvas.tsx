@@ -2,6 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { KnowledgeNode } from '../domain/models'
 import { appModel, useAppState } from '../useAppModel'
 import type { NodeStatus } from '../domain/models'
+import {
+  DEFAULT_PARAMS,
+  ForcePoint,
+  SimState,
+  edgesFromPrerequisites,
+  initSim,
+  simulateStep,
+} from './forceLayout'
 
 const NODE_WIDTH = 168
 const NODE_HEIGHT = 60
@@ -107,10 +115,14 @@ interface Props {
   activeId?: string | null
   /** 总览模式：节点点击回调（点模块 → 进入该子系统地图） */
   onNodeClick?: (node: KnowledgeNode) => void
+  /** 力导向网状模式：节点位置由物理模拟驱动，节点可拖拽且邻居联动（Obsidian 风格） */
+  force?: boolean
+  /** force 模式：用户拖拽后布局的持久化键 */
+  storageKey?: string
 }
 
-/** 知识地图：SVG 自绘，圆点网格 + 贝塞尔学习路径 + 游戏风节点 + 平移缩放 */
-export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNodeClick }: Props) {
+/** 知识地图：SVG 自绘，圆点网格 + 贝塞尔学习路径 + 游戏风节点 + 平移缩放；总览支持力导向拖拽联动 */
+export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNodeClick, force = false, storageKey }: Props) {
   useAppState() // 订阅进度变化以重绘节点状态
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -118,9 +130,92 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
   const viewportRef = useRef(viewport)
   viewportRef.current = viewport
 
-  /** 一键适配视口：仅在挂载、容器尺寸或节点集合变化时执行 */
+  // MARK: 力导向（force 模式）
+
+  const simRef = useRef<SimState | null>(null)
+  const rafRef = useRef<number | undefined>(undefined)
+  const [forcePositions, setForcePositions] = useState<Record<string, ForcePoint>>({})
+  const positionsRef = useRef(forcePositions)
+  positionsRef.current = forcePositions
+  // 拖拽中的节点：钉在光标上，邻居经弹簧联动
+  const pinnedRef = useRef<{ id: string; moved: boolean; startX: number; startY: number; content: ForcePoint; node: KnowledgeNode } | null>(null)
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
+
+  const persistPositions = useCallback(() => {
+    if (!force || !storageKey || !simRef.current) return
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(simRef.current.positions)))
+    } catch {
+      /* 存储不可用则放弃持久化 */
+    }
+  }, [force, storageKey])
+
+  const ensureLoop = useCallback(() => {
+    if (!force || rafRef.current !== undefined) return
+    const stepFrame = () => {
+      const sim = simRef.current
+      if (!sim) {
+        rafRef.current = undefined
+        return
+      }
+      const pin = pinnedRef.current
+      const pinned: Record<string, ForcePoint> = pin ? { [pin.id]: pin.content } : {}
+      const move = simulateStep(sim, nodesRef.current, edgesFromPrerequisites(nodesRef.current), DEFAULT_PARAMS, pinned)
+      sim.alpha *= 0.985
+      setForcePositions(Object.fromEntries(sim.positions))
+      if (sim.alpha > 0.02 && (move > 0.4 || pin)) {
+        rafRef.current = requestAnimationFrame(stepFrame)
+      } else {
+        rafRef.current = undefined
+        persistPositions()
+      }
+    }
+    rafRef.current = requestAnimationFrame(stepFrame)
+  }, [force, persistPositions])
+
+  useEffect(() => {
+    if (!force) return
+    let saved: Record<string, ForcePoint> | undefined
+    try {
+      saved = JSON.parse(localStorage.getItem(storageKey ?? '') ?? 'null') ?? undefined
+    } catch {
+      saved = undefined
+    }
+    simRef.current = initSim(nodes, saved)
+    setForcePositions(Object.fromEntries(simRef.current.positions))
+    ensureLoop()
+    return () => {
+      if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current)
+      rafRef.current = undefined
+      persistPositions()
+    }
+    // nodes 随 mapKey 重挂载才变化
+  }, [force]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 屏幕坐标 → 内容坐标 */
+  const toContent = useCallback((clientX: number, clientY: number): ForcePoint => {
+    const bounds = containerRef.current?.getBoundingClientRect()
+    const v = viewportRef.current
+    return {
+      x: (clientX - (bounds?.left ?? 0) - v.tx) / v.scale,
+      y: (clientY - (bounds?.top ?? 0) - v.ty) / v.scale,
+    }
+  }, [])
+
+  /** 节点当前渲染位置 */
+  const layoutOf = useCallback(
+    (node: KnowledgeNode): ForcePoint => (force ? forcePositions[node.id] ?? node.layout : node.layout),
+    [force, forcePositions],
+  )
+
+  // MARK: 视口适配
+
   const fit = useCallback(() => {
-    const rect = contentRect(nodes)
+    const source = force && Object.keys(positionsRef.current).length > 0
+      ? nodes.map((n) => ({ layout: positionsRef.current[n.id] ?? n.layout }))
+      : nodes
+    const rect = contentRect(source)
     if (!rect || size.w <= 0 || size.h <= 0 || rect.width <= 0 || rect.height <= 0) return
     const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(size.w / rect.width, size.h / rect.height)))
     setViewport({
@@ -128,7 +223,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
       tx: size.w / 2 - rect.x * scale - (rect.width * scale) / 2,
       ty: size.h / 2 - rect.y * scale - (rect.height * scale) / 2,
     })
-  }, [nodes, size.w, size.h])
+  }, [force, nodes, size.w, size.h])
 
   useEffect(() => {
     fit()
@@ -147,7 +242,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
     return () => ro.disconnect()
   }, [])
 
-  // MARK: 手势（平移 + 滚轮缩放 + 双指捏合缩放）
+  // MARK: 手势（画布平移 + 滚轮/双指捏合缩放 + force 节点拖拽联动）
 
   const dragState = useRef<{ startX: number; startY: number; baseTx: number; baseTy: number; moved: boolean; pointerId: number } | null>(null)
   // 多点触控：活动指针表 + 捏合基准（两点距离与当时视口）
@@ -155,6 +250,13 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
   const pinchState = useRef<{ baseDist: number; base: Viewport; midX: number; midY: number } | null>(null)
 
   const endDrag = () => {
+    // force：拖拽节点时指针离开画布 → 解除钉住（不触发点击）
+    if (pinnedRef.current) {
+      pinnedRef.current = null
+      if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.5)
+      ensureLoop()
+      persistPositions()
+    }
     dragState.current = null
     activePointers.current.clear()
     pinchState.current = null
@@ -187,6 +289,15 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    // force 模式：拖拽节点（钉住 + 邻居联动），优先于画布平移
+    const pin = pinnedRef.current
+    if (pin) {
+      if (Math.hypot(e.clientX - pin.startX, e.clientY - pin.startY) > 4) pin.moved = true
+      pin.content = toContent(e.clientX, e.clientY)
+      if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.9)
+      ensureLoop()
+      return
+    }
     if (!activePointers.current.has(e.pointerId)) return
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
 
@@ -219,6 +330,18 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
 
   /** 只有按住指针的拖拽才平移；松手一律结束拖拽状态 */
   const onPointerUp = (e: React.PointerEvent) => {
+    // force：松开被拖拽的节点 → 解除钉住、回弹沉降并持久化；未移动视为点击
+    if (pinnedRef.current) {
+      const { moved, node } = pinnedRef.current
+      pinnedRef.current = null
+      if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.5)
+      ensureLoop()
+      if (!moved) {
+        persistPositions()
+        onNodeClick?.(node)
+      }
+      return
+    }
     activePointers.current.delete(e.pointerId)
     pinchState.current = null
     // 双指松开一指后，剩余手指接力为单指拖拽
@@ -296,9 +419,9 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
             node.prerequisites.map((preId) => {
               const pre = nodeById.get(preId)
               if (!pre) return null
-              const ep = edgeEndpoints(pre.layout, node.layout)
+              const ep = edgeEndpoints(layoutOf(pre), layoutOf(node))
               if (!ep) return null
-              const targetStatus = appModel.statusOf(node)
+              const targetStatus = statusFor ? statusFor(node) : appModel.statusOf(node)
               const bothMastered = appModel.isMastered(pre.id) && appModel.isMastered(node.id)
               const flowing = targetStatus === 'available'
               const color = bothMastered
@@ -338,18 +461,33 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
             const colored = COLORED_STATUSES.includes(status)
             const lockedOrSoon = status === 'locked' || status === 'comingSoon'
             const badge = badgeFor ? badgeFor(node, status) : statusBadge(status)
+            const p = layoutOf(node)
             return (
-              <g key={node.id} transform={`translate(${node.layout.x} ${node.layout.y})`}>
+              <g key={node.id} transform={`translate(${p.x} ${p.y})`}>
                 <g
                   className={`map-node ${isSelected ? 'selected' : ''} ${status === 'available' ? 'glow' : ''}`}
+                  onPointerDown={(e) => {
+                    if (!force) return
+                    // force 模式：按住节点 = 拖拽联动（阻止画布平移）
+                    e.stopPropagation()
+                    const c = toContent(e.clientX, e.clientY)
+                    pinnedRef.current = {
+                      id: node.id, moved: false,
+                      startX: e.clientX, startY: e.clientY,
+                      content: c, node,
+                    }
+                    if (simRef.current) simRef.current.alpha = 1
+                    ensureLoop()
+                  }}
                   onPointerUp={() => {
+                    if (force) return // 点击判定与收尾由 svg 层的 onPointerUp 处理
                     // 不阻断冒泡：让 svg 的 onPointerUp 结束拖拽状态
                     if (!dragState.current?.moved) {
                       if (onNodeClick) onNodeClick(node)
                       else appModel.selectNode(node.id)
                     }
                   }}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: force ? 'grab' : 'pointer' }}
                 >
                   <rect
                     className="body"

@@ -237,6 +237,8 @@ export default function App() {
           <MapCanvas
             key={mapKey}
             nodes={overviewNodes}
+            force
+            storageKey="knowlemap.overviewLayout.v1"
             statusFor={(node) => overviewStatuses.get(node.id) ?? 'locked'}
             badgeFor={(node) => overviewBadgeFor(node)}
             activeId={currentModuleId}

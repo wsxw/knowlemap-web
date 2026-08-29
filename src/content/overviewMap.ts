@@ -15,16 +15,20 @@ import * as engine from '../domain/learningEngine'
 export const OVERVIEW_ID = 'overview'
 export const OVERVIEW_ROOT_ID = 'en'
 
-/** 总览画布坐标：根节点在左，模块按学习动线排布，跨模块箭头不交叉 */
-const OVERVIEW_LAYOUT: Record<string, Point2> = {
-  [OVERVIEW_ROOT_ID]: { x: 130, y: 300 },
-  grammar: { x: 400, y: 170 },
-  vocabulary: { x: 400, y: 285 },
-  pronunciation: { x: 400, y: 400 },
-  functions: { x: 665, y: 225 },
-  discourse: { x: 665, y: 340 },
-  skills: { x: 665, y: 455 },
-}
+/** 总览初始坐标：英语居中、模块环绕——力导向模拟从这个对称起点收敛成网状 */
+const OVERVIEW_LAYOUT: Record<string, Point2> = (() => {
+  const layout: Record<string, Point2> = { [OVERVIEW_ROOT_ID]: { x: 420, y: 300 } }
+  const moduleIds = ['grammar', 'vocabulary', 'pronunciation', 'functions', 'discourse', 'skills']
+  const radius = 190
+  moduleIds.forEach((id, i) => {
+    const angle = (Math.PI * 2 * i) / moduleIds.length - Math.PI / 2 // 第一个从正上方开始
+    layout[id] = {
+      x: Math.round(420 + radius * Math.cos(angle)),
+      y: Math.round(300 + radius * Math.sin(angle)),
+    }
+  })
+  return layout
+})()
 
 function layoutFor(id: string, index: number): Point2 {
   return OVERVIEW_LAYOUT[id] ?? { x: 400, y: 120 + index * 110 }
