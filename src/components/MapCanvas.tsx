@@ -167,13 +167,21 @@ export default function MapCanvas({
     return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : { x: 0, y: 0 }
   }, [nodes, NW, NH])
 
-  /** 每步模拟的钉住表：锚定节点恒在中心；拖拽中的节点优先跟随光标 */
+  /** 每步模拟的钉住表：仅拖拽中的节点（跟随光标） */
   const pinnedForSim = useCallback(
     (drag: { id: string; content: ForcePoint } | null): Record<string, ForcePoint> => {
       const p: Record<string, ForcePoint> = {}
-      if (anchorId) p[anchorId] = anchorCenter
       if (drag) p[drag.id] = drag.content
       return p
+    },
+    [],
+  )
+
+  /** 锚定节点的归位目标（非拖拽时生效），拖拽中让它跟手 */
+  const homeSpringsFor = useCallback(
+    (dragId: string | null): Record<string, ForcePoint> => {
+      if (!anchorId || dragId === anchorId) return {}
+      return { [anchorId]: anchorCenter }
     },
     [anchorId, anchorCenter],
   )
@@ -197,8 +205,23 @@ export default function MapCanvas({
         return
       }
       const pin = pinnedRef.current
-      const move = simulateStep(sim, nodesRef.current, edgesFromPrerequisites(nodesRef.current), params, pinnedForSim(pin ? { id: pin.id, content: pin.content } : null))
+      const move = simulateStep(
+        sim,
+        nodesRef.current,
+        edgesFromPrerequisites(nodesRef.current),
+        params,
+        pinnedForSim(pin ? { id: pin.id, content: pin.content } : null),
+        homeSpringsFor(pin?.id ?? null),
+      )
       sim.alpha *= 0.985
+      // 锚定节点尚未到家时保持模拟活跃（回中动画不被冷却打断）
+      if (anchorId) {
+        const p = sim.positions.get(anchorId)
+        const home = homeSpringsFor(null)[anchorId]
+        if (p && home && Math.hypot(p.x - home.x, p.y - home.y) > 1.5) {
+          sim.alpha = Math.max(sim.alpha, 0.5)
+        }
+      }
       setForcePositions(Object.fromEntries(sim.positions))
       if (sim.alpha > 0.02 && (move > 0.4 || pin)) {
         rafRef.current = requestAnimationFrame(stepFrame)
@@ -208,7 +231,7 @@ export default function MapCanvas({
       }
     }
     rafRef.current = requestAnimationFrame(stepFrame)
-  }, [force, params, pinnedForSim, persistPositions])
+  }, [force, params, pinnedForSim, homeSpringsFor, anchorId, persistPositions])
 
   useEffect(() => {
     if (!force) return
@@ -430,37 +453,6 @@ export default function MapCanvas({
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
-  /** 电池进度条（总览）：轮廓 + 左侧进度填充 + 右侧极耳，填充色与节点主体色不同 */
-  const battery = (ratio: number | null, colored: boolean, lockedOrSoon: boolean) => {
-    if (ratio === null || ratio === undefined) return null
-    const bw = 78
-    const bh = 13
-    const by = NH / 2 - 19
-    const innerW = bw - 4
-    const fillW = Math.max(ratio > 0 ? 4 : 0, innerW * Math.min(1, Math.max(0, ratio)))
-    const outline = lockedOrSoon ? 'var(--text-tertiary)' : 'rgba(255, 255, 255, 0.6)'
-    const fill = lockedOrSoon
-      ? 'var(--text-tertiary)'
-      : statusNameRatioColored(ratio, colored)
-    return (
-      <g style={{ pointerEvents: 'none' }}>
-        {/* 极耳 */}
-        <rect x={bw / 2 + 1.5} y={by + bh / 2 - 3} width={3.5} height={6} rx={1.2} fill={outline} />
-        {/* 轮廓 */}
-        <rect x={-bw / 2} y={by} width={bw} height={bh} rx={4.5} fill="none" stroke={outline} strokeWidth={1.4} />
-        {/* 进度填充：与节点主体蓝不同的颜色 */}
-        {fillW > 0 && (
-          <rect x={-bw / 2 + 2} y={by + 2} width={fillW} height={bh - 4} rx={2.5} fill={fill} />
-        )}
-      </g>
-    )
-  }
-
-  function statusNameRatioColored(ratio: number, _colored: boolean): string {
-    // 进度色：琥珀色电池填充（与蓝色主体形成对比）；已满格用青绿
-    return ratio >= 1 ? 'var(--battery-full)' : 'var(--battery-fill)'
-  }
-
   return (
     <div className="map-canvas-wrap" ref={containerRef}>
       <svg
@@ -481,6 +473,10 @@ export default function MapCanvas({
             <stop offset="0%" stopColor="#ffffff" stopOpacity="0.32" />
             <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
           </linearGradient>
+          {/* 进度填充的圆角裁剪：整个节点方块就是电池 */}
+          <clipPath id="km-node-clip">
+            <rect x={-NW / 2} y={-NH / 2} width={NW} height={NH} rx={16} />
+          </clipPath>
         </defs>
 
         <g transform={`translate(${viewport.tx} ${viewport.ty}) scale(${viewport.scale})`}>
@@ -577,6 +573,18 @@ export default function MapCanvas({
                     strokeWidth={isSelected ? 3.5 : 1.4}
                     strokeDasharray={status === 'comingSoon' ? '6 4' : undefined}
                   />
+                  {/* 进度填充：整个方块就是电池，从左往右点亮（充电式） */}
+                  {progress !== null && progress !== undefined && progress > 0 && (
+                    <rect
+                      x={-NW / 2}
+                      y={-NH / 2}
+                      width={NW * Math.min(1, Math.max(0, progress))}
+                      height={NH}
+                      fill={status === 'mastered' ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.92)'}
+                      clipPath="url(#km-node-clip)"
+                      style={{ pointerEvents: 'none', transition: 'width 0.6s cubic-bezier(0.22, 1, 0.36, 1)' }}
+                    />
+                  )}
                   {colored && (
                     <rect
                       x={-NW / 2} y={-NH / 2}
@@ -594,7 +602,7 @@ export default function MapCanvas({
                   )}
                   <text
                     textAnchor="middle"
-                    y={progress !== null && progress !== undefined ? -7 : textBadge ? -8 : 5}
+                    y={progress !== null && progress !== undefined ? -6 : textBadge ? -8 : 5}
                     fontSize={nodeSize ? 13.5 : 14}
                     fontWeight={700}
                     fill={lockedOrSoon ? 'var(--text-secondary)' : '#ffffff'}
@@ -604,23 +612,20 @@ export default function MapCanvas({
                   >
                     {node.title}
                   </text>
-                  {/* 总览：电池进度条 + 计数小字 */}
+                  {/* 总览：点亮计数小字 */}
                   {progress !== null && progress !== undefined ? (
-                    <>
-                      {battery(progress, colored, lockedOrSoon)}
-                      <text
-                        textAnchor="middle"
-                        y={NH / 2 - 19 + 13 / 2 + 3}
-                        fontSize={9.5}
-                        fontWeight={700}
-                        fill="#ffffff"
-                        style={{ paintOrder: 'stroke', pointerEvents: 'none' }}
-                        stroke="rgba(15, 23, 60, 0.4)"
-                        strokeWidth={2}
-                      >
-                        {badgeFor ? badgeFor(node, status) : ''}
-                      </text>
-                    </>
+                    <text
+                      textAnchor="middle"
+                      y={15}
+                      fontSize={10.5}
+                      fontWeight={700}
+                      fill="#ffffff"
+                      style={{ paintOrder: 'stroke', pointerEvents: 'none' }}
+                      stroke="rgba(15, 23, 60, 0.35)"
+                      strokeWidth={2}
+                    >
+                      {badgeFor ? badgeFor(node, status) : ''}
+                    </text>
                   ) : (
                     textBadge && (
                       <text

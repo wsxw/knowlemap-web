@@ -59,6 +59,24 @@ describe('力导向布局引擎', () => {
     expect(after['a'].y).toBe(45)
   })
 
+  it('锚定归位：指数缓动逐步收敛回家，平滑无过冲', () => {
+    const nodes = mkNodes([['a', 0, 0], ['b', 400, 0]])
+    const sim = initSim(nodes)
+    const home = { x: 200, y: 0 }
+    let prevDist = 200
+    let overshoot = false
+    for (let i = 0; i < 200; i++) {
+      simulateStep(sim, nodes, [], { ...DEFAULT_PARAMS }, {}, { a: home })
+      const p = sim.positions.get('a')!
+      const d = Math.hypot(p.x - 200, p.y - 0)
+      if (d > prevDist + 0.001) overshoot = true
+      prevDist = d
+    }
+    const p = sim.positions.get('a')!
+    expect(Math.hypot(p.x - 200, p.y - 0)).toBeLessThan(1)
+    expect(overshoot).toBe(false)
+  })
+
   it('edgesFromPrerequisites 正确展开前置关系', () => {
     const edges = edgesFromPrerequisites([
       { id: 'b', prerequisites: ['a', 'c'] },

@@ -31,6 +31,8 @@ export interface ForceParams {
   damping: number
   /** 单步最大位移（防爆） */
   maxDisplacement: number
+  /** 锚定节点归位缓动系数（每帧向家点靠拢的比例，越小越慢越平滑） */
+  anchorEase: number
 }
 
 export const DEFAULT_PARAMS: ForceParams = {
@@ -40,6 +42,7 @@ export const DEFAULT_PARAMS: ForceParams = {
   gravity: 0.015,
   damping: 0.82,
   maxDisplacement: 24,
+  anchorEase: 0.045,
 }
 
 export interface SimState {
@@ -70,6 +73,8 @@ export function simulateStep(
   edges: ForceEdge[],
   params: ForceParams = DEFAULT_PARAMS,
   pinned: Record<string, ForcePoint> = {},
+  /** 归位弹簧：节点平滑缓动回家的目标点（如「英语」根节点的画布中心），非硬钉 */
+  homeSprings: Record<string, ForcePoint> = {},
 ): number {
   const { positions, velocities } = state
   const ids = nodes.map((n) => n.id)
@@ -157,6 +162,20 @@ export function simulateStep(
     p.x += dx
     p.y += dy
     totalMove += Math.hypot(dx, dy)
+    positions.set(id, { x: p.x, y: p.y })
+  }
+
+  // 4) 锚定节点归位：指数缓动逼近家点（临界阻尼感，无过冲，速度由 anchorEase 控制）
+  for (const [id, home] of Object.entries(homeSprings)) {
+    if (pinned[id]) continue
+    const p = positions.get(id)
+    if (!p) continue
+    const dx = home.x - p.x
+    const dy = home.y - p.y
+    p.x += dx * params.anchorEase
+    p.y += dy * params.anchorEase
+    velocities.set(id, { x: 0, y: 0 })
+    totalMove += Math.hypot(dx, dy) * params.anchorEase
     positions.set(id, { x: p.x, y: p.y })
   }
   return totalMove
