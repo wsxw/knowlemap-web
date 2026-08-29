@@ -56,6 +56,10 @@
   --glass-bg: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.65);
 
+  /* 总览电池进度：填充色与节点主体蓝不同 */
+  --battery-fill: #fbbf24;
+  --battery-full: #5eead4;
+
   /* 染色底 */
   --blue-tint: rgba(79, 110, 247, 0.1);
   --green-tint: rgba(34, 197, 94, 0.12);

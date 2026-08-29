@@ -150,24 +150,26 @@ export default function App() {
     [currentNode, store],
   )
 
+  /** 总览节点点亮计数（根节点 = 全主题） */
+  const overviewCounts = useCallback(
+    (node: { id: string }): { mastered: number; total: number } => {
+      if (!store) return { mastered: 0, total: 0 }
+      if (node.id === OVERVIEW_ROOT_ID) return appModel.overallProgress()
+      const module = allModules(store.pack).find((m) => m.id === node.id)
+      if (!module) return { mastered: 0, total: 0 }
+      const total = module.subsystems.flatMap((s) => s.nodes).filter((n) => !n.comingSoon).length
+      const mastered = moduleMasteredCount(module, state.profile)
+      return { mastered, total }
+    },
+    [store, state.profile],
+  )
+
   const overviewBadgeFor = useCallback(
     (node: { id: string }) => {
-      if (!store) return null
-      let mastered: number, total: number
-      if (node.id === OVERVIEW_ROOT_ID) {
-        const overall = appModel.overallProgress()
-        mastered = overall.mastered
-        total = overall.total
-      } else {
-        const module = allModules(store.pack).find((m) => m.id === node.id)
-        if (!module) return null
-        total = module.subsystems.flatMap((s) => s.nodes).filter((n) => !n.comingSoon).length
-        mastered = moduleMasteredCount(module, state.profile)
-      }
-      const here = node.id === currentModuleId ? ' 📍' : ''
-      return `${mastered}/${total}${here}`
+      const { mastered, total } = overviewCounts(node)
+      return `${mastered}/${total}`
     },
-    [store, state.profile, currentModuleId],
+    [overviewCounts],
   )
 
   // 稳定引用：仅在地图或级别筛选变化时重建数组。
@@ -239,8 +241,15 @@ export default function App() {
             nodes={overviewNodes}
             force
             storageKey="knowlemap.overviewLayout.v1"
+            anchorId={OVERVIEW_ROOT_ID}
+            forceParams={{ restLength: 268, repulsion: 36000 }}
+            nodeSize={{ w: 148, h: 56 }}
             statusFor={(node) => overviewStatuses.get(node.id) ?? 'locked'}
             badgeFor={(node) => overviewBadgeFor(node)}
+            progressFor={(node) => {
+              const b = overviewCounts(node)
+              return b.total > 0 ? b.mastered / b.total : null
+            }}
             activeId={currentModuleId}
             onNodeClick={(node) => {
               // 点模块 → 进入该模块的第一个子系统地图；根节点不响应

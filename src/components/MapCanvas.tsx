@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { KnowledgeNode } from '../domain/models'
 import { appModel, useAppState } from '../useAppModel'
 import type { NodeStatus } from '../domain/models'
 import {
   DEFAULT_PARAMS,
+  ForceParams,
   ForcePoint,
   SimState,
   edgesFromPrerequisites,
@@ -11,8 +12,9 @@ import {
   simulateStep,
 } from './forceLayout'
 
-const NODE_WIDTH = 168
-const NODE_HEIGHT = 60
+/** 节点尺寸：子系统地图用默认值；总览传更紧凑的尺寸 */
+const DEFAULT_NODE_W = 168
+const DEFAULT_NODE_H = 60
 const MARGIN = 40
 const MIN_SCALE = 0.3
 const MAX_SCALE = 3
@@ -24,14 +26,14 @@ interface Viewport {
   scale: number
 }
 
-function contentRect(nodes: { layout: { x: number; y: number } }[]) {
+function contentRect(nodes: { layout: { x: number; y: number } }[], nw: number, nh: number) {
   if (nodes.length === 0) return null
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const n of nodes) {
-    minX = Math.min(minX, n.layout.x - NODE_WIDTH / 2)
-    minY = Math.min(minY, n.layout.y - NODE_HEIGHT / 2)
-    maxX = Math.max(maxX, n.layout.x + NODE_WIDTH / 2)
-    maxY = Math.max(maxY, n.layout.y + NODE_HEIGHT / 2)
+    minX = Math.min(minX, n.layout.x - nw / 2)
+    minY = Math.min(minY, n.layout.y - nh / 2)
+    maxX = Math.max(maxX, n.layout.x + nw / 2)
+    maxY = Math.max(maxY, n.layout.y + nh / 2)
   }
   return {
     x: minX - MARGIN,
@@ -48,6 +50,8 @@ function contentRect(nodes: { layout: { x: number; y: number } }[]) {
 function edgeEndpoints(
   a: { x: number; y: number },
   b: { x: number; y: number },
+  nw: number,
+  nh: number,
 ): { start: { x: number; y: number }; end: { x: number; y: number } } | null {
   const dx = b.x - a.x
   const dy = b.y - a.y
@@ -56,8 +60,8 @@ function edgeEndpoints(
 
   // tExit：中心出发的射线离开半宽 hw / 半高 hh 矩形的参数
   const exitRect = (cx: number, cy: number, sgn: number) => {
-    const tx = dx !== 0 ? Math.abs(NODE_WIDTH / 2 / dx) : Infinity
-    const ty = dy !== 0 ? Math.abs(NODE_HEIGHT / 2 / dy) : Infinity
+    const tx = dx !== 0 ? Math.abs(nw / 2 / dx) : Infinity
+    const ty = dy !== 0 ? Math.abs(nh / 2 / dy) : Infinity
     const t = Math.min(tx, ty)
     return { x: cx + sgn * dx * t, y: cy + sgn * dy * t }
   }
@@ -111,7 +115,9 @@ interface Props {
   statusFor?: (node: KnowledgeNode) => NodeStatus
   /** 总览模式：覆盖状态角标文案（如模块的「3/30」点亮计数） */
   badgeFor?: (node: KnowledgeNode, status: NodeStatus) => string | null
-  /** 总览模式：额外高亮环（📍 当前所在模块） */
+  /** 总览模式：节点内电池进度条（0~1，null/undefined 不显示） */
+  progressFor?: (node: KnowledgeNode) => number | null
+  /** 总览模式：额外高亮环 + 右上角 📍（当前所在模块） */
   activeId?: string | null
   /** 总览模式：节点点击回调（点模块 → 进入该子系统地图） */
   onNodeClick?: (node: KnowledgeNode) => void
@@ -119,16 +125,29 @@ interface Props {
   force?: boolean
   /** force 模式：用户拖拽后布局的持久化键 */
   storageKey?: string
+  /** force 模式：锚定节点（如「英语」根）——始终固定在初始布局中心，拖动松手后弹回 */
+  anchorId?: string
+  /** force 模式：力学参数覆盖（如更舒展的间距） */
+  forceParams?: Partial<ForceParams>
+  /** 紧凑节点尺寸（总览用）；不传用默认尺寸 */
+  nodeSize?: { w: number; h: number }
 }
 
 /** 知识地图：SVG 自绘，圆点网格 + 贝塞尔学习路径 + 游戏风节点 + 平移缩放；总览支持力导向拖拽联动 */
-export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNodeClick, force = false, storageKey }: Props) {
+export default function MapCanvas({
+  nodes, statusFor, badgeFor, progressFor, activeId, onNodeClick,
+  force = false, storageKey, anchorId, forceParams, nodeSize,
+}: Props) {
   useAppState() // 订阅进度变化以重绘节点状态
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [viewport, setViewport] = useState<Viewport>({ tx: 0, ty: 0, scale: 1 })
   const viewportRef = useRef(viewport)
   viewportRef.current = viewport
+
+  const NW = nodeSize?.w ?? DEFAULT_NODE_W
+  const NH = nodeSize?.h ?? DEFAULT_NODE_H
+  const params: ForceParams = { ...DEFAULT_PARAMS, ...forceParams }
 
   // MARK: 力导向（force 模式）
 
@@ -142,14 +161,32 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
 
+  /** 锚定节点的默认位置：初始布局的包围盒中心（「英语」永远回到这里） */
+  const anchorCenter = useMemo<ForcePoint>(() => {
+    const rect = contentRect(nodes, NW, NH)
+    return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : { x: 0, y: 0 }
+  }, [nodes, NW, NH])
+
+  /** 每步模拟的钉住表：锚定节点恒在中心；拖拽中的节点优先跟随光标 */
+  const pinnedForSim = useCallback(
+    (drag: { id: string; content: ForcePoint } | null): Record<string, ForcePoint> => {
+      const p: Record<string, ForcePoint> = {}
+      if (anchorId) p[anchorId] = anchorCenter
+      if (drag) p[drag.id] = drag.content
+      return p
+    },
+    [anchorId, anchorCenter],
+  )
+
   const persistPositions = useCallback(() => {
     if (!force || !storageKey || !simRef.current) return
     try {
-      localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(simRef.current.positions)))
+      const entries = [...simRef.current.positions].filter(([id]) => id !== anchorId)
+      localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries)))
     } catch {
       /* 存储不可用则放弃持久化 */
     }
-  }, [force, storageKey])
+  }, [force, storageKey, anchorId])
 
   const ensureLoop = useCallback(() => {
     if (!force || rafRef.current !== undefined) return
@@ -160,8 +197,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
         return
       }
       const pin = pinnedRef.current
-      const pinned: Record<string, ForcePoint> = pin ? { [pin.id]: pin.content } : {}
-      const move = simulateStep(sim, nodesRef.current, edgesFromPrerequisites(nodesRef.current), DEFAULT_PARAMS, pinned)
+      const move = simulateStep(sim, nodesRef.current, edgesFromPrerequisites(nodesRef.current), params, pinnedForSim(pin ? { id: pin.id, content: pin.content } : null))
       sim.alpha *= 0.985
       setForcePositions(Object.fromEntries(sim.positions))
       if (sim.alpha > 0.02 && (move > 0.4 || pin)) {
@@ -172,17 +208,19 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
       }
     }
     rafRef.current = requestAnimationFrame(stepFrame)
-  }, [force, persistPositions])
+  }, [force, params, pinnedForSim, persistPositions])
 
   useEffect(() => {
     if (!force) return
     let saved: Record<string, ForcePoint> | undefined
     try {
-      saved = JSON.parse(localStorage.getItem(storageKey ?? '') ?? 'null') ?? undefined
+      const raw = JSON.parse(localStorage.getItem(storageKey ?? '') ?? 'null') as Record<string, ForcePoint> | null
+      if (raw) saved = Object.fromEntries(Object.entries(raw).filter(([id]) => id !== anchorId))
     } catch {
       saved = undefined
     }
     simRef.current = initSim(nodes, saved)
+    if (anchorId) simRef.current.positions.set(anchorId, { ...anchorCenter })
     setForcePositions(Object.fromEntries(simRef.current.positions))
     ensureLoop()
     return () => {
@@ -215,7 +253,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
     const source = force && Object.keys(positionsRef.current).length > 0
       ? nodes.map((n) => ({ layout: positionsRef.current[n.id] ?? n.layout }))
       : nodes
-    const rect = contentRect(source)
+    const rect = contentRect(source, NW, NH)
     if (!rect || size.w <= 0 || size.h <= 0 || rect.width <= 0 || rect.height <= 0) return
     const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(size.w / rect.width, size.h / rect.height)))
     setViewport({
@@ -223,7 +261,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
       tx: size.w / 2 - rect.x * scale - (rect.width * scale) / 2,
       ty: size.h / 2 - rect.y * scale - (rect.height * scale) / 2,
     })
-  }, [force, nodes, size.w, size.h])
+  }, [force, nodes, NW, NH, size.w, size.h])
 
   useEffect(() => {
     fit()
@@ -330,15 +368,18 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
 
   /** 只有按住指针的拖拽才平移；松手一律结束拖拽状态 */
   const onPointerUp = (e: React.PointerEvent) => {
-    // force：松开被拖拽的节点 → 解除钉住、回弹沉降并持久化；未移动视为点击
+    // force：松开被拖拽的节点 → 解除拖拽钉住、回弹沉降并持久化；未移动视为点击
+    // （锚定节点随后会被 pinnedForSim 拉回中心）
     if (pinnedRef.current) {
       const { moved, node } = pinnedRef.current
       pinnedRef.current = null
-      if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.5)
+      if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.9)
       ensureLoop()
       if (!moved) {
         persistPositions()
         onNodeClick?.(node)
+      } else {
+        persistPositions()
       }
       return
     }
@@ -389,6 +430,37 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
+  /** 电池进度条（总览）：轮廓 + 左侧进度填充 + 右侧极耳，填充色与节点主体色不同 */
+  const battery = (ratio: number | null, colored: boolean, lockedOrSoon: boolean) => {
+    if (ratio === null || ratio === undefined) return null
+    const bw = 78
+    const bh = 13
+    const by = NH / 2 - 19
+    const innerW = bw - 4
+    const fillW = Math.max(ratio > 0 ? 4 : 0, innerW * Math.min(1, Math.max(0, ratio)))
+    const outline = lockedOrSoon ? 'var(--text-tertiary)' : 'rgba(255, 255, 255, 0.6)'
+    const fill = lockedOrSoon
+      ? 'var(--text-tertiary)'
+      : statusNameRatioColored(ratio, colored)
+    return (
+      <g style={{ pointerEvents: 'none' }}>
+        {/* 极耳 */}
+        <rect x={bw / 2 + 1.5} y={by + bh / 2 - 3} width={3.5} height={6} rx={1.2} fill={outline} />
+        {/* 轮廓 */}
+        <rect x={-bw / 2} y={by} width={bw} height={bh} rx={4.5} fill="none" stroke={outline} strokeWidth={1.4} />
+        {/* 进度填充：与节点主体蓝不同的颜色 */}
+        {fillW > 0 && (
+          <rect x={-bw / 2 + 2} y={by + 2} width={fillW} height={bh - 4} rx={2.5} fill={fill} />
+        )}
+      </g>
+    )
+  }
+
+  function statusNameRatioColored(ratio: number, _colored: boolean): string {
+    // 进度色：琥珀色电池填充（与蓝色主体形成对比）；已满格用青绿
+    return ratio >= 1 ? 'var(--battery-full)' : 'var(--battery-fill)'
+  }
+
   return (
     <div className="map-canvas-wrap" ref={containerRef}>
       <svg
@@ -419,7 +491,7 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
             node.prerequisites.map((preId) => {
               const pre = nodeById.get(preId)
               if (!pre) return null
-              const ep = edgeEndpoints(layoutOf(pre), layoutOf(node))
+              const ep = edgeEndpoints(layoutOf(pre), layoutOf(node), NW, NH)
               if (!ep) return null
               const targetStatus = statusFor ? statusFor(node) : appModel.statusOf(node)
               const bothMastered = appModel.isMastered(pre.id) && appModel.isMastered(node.id)
@@ -460,7 +532,8 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
               : appModel.getSnapshot().selectedNodeId === node.id
             const colored = COLORED_STATUSES.includes(status)
             const lockedOrSoon = status === 'locked' || status === 'comingSoon'
-            const badge = badgeFor ? badgeFor(node, status) : statusBadge(status)
+            const progress = progressFor ? progressFor(node) : null
+            const textBadge = progressFor ? null : badgeFor ? badgeFor(node, status) : statusBadge(status)
             const p = layoutOf(node)
             return (
               <g key={node.id} transform={`translate(${p.x} ${p.y})`}>
@@ -491,8 +564,8 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
                 >
                   <rect
                     className="body"
-                    x={-NODE_WIDTH / 2} y={-NODE_HEIGHT / 2}
-                    width={NODE_WIDTH} height={NODE_HEIGHT}
+                    x={-NW / 2} y={-NH / 2}
+                    width={NW} height={NH}
                     rx={16}
                     fill={statusColor(status)}
                     stroke={
@@ -506,17 +579,23 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
                   />
                   {colored && (
                     <rect
-                      x={-NODE_WIDTH / 2} y={-NODE_HEIGHT / 2}
-                      width={NODE_WIDTH} height={NODE_HEIGHT}
+                      x={-NW / 2} y={-NH / 2}
+                      width={NW} height={NH}
                       rx={16}
                       fill="url(#km-sheen)"
                       pointerEvents="none"
                     />
                   )}
+                  {/* 当前所在模块：右上角 📍 */}
+                  {activeId !== undefined && node.id === activeId && (
+                    <text x={NW / 2 - 9} y={-NH / 2 + 11} fontSize={11} style={{ pointerEvents: 'none' }}>
+                      📍
+                    </text>
+                  )}
                   <text
                     textAnchor="middle"
-                    y={badge ? -8 : 5}
-                    fontSize={14}
+                    y={progress !== null && progress !== undefined ? -7 : textBadge ? -8 : 5}
+                    fontSize={nodeSize ? 13.5 : 14}
                     fontWeight={700}
                     fill={lockedOrSoon ? 'var(--text-secondary)' : '#ffffff'}
                     style={{ paintOrder: 'stroke', pointerEvents: 'none' }}
@@ -525,17 +604,36 @@ export default function MapCanvas({ nodes, statusFor, badgeFor, activeId, onNode
                   >
                     {node.title}
                   </text>
-                  {badge && (
-                    <text
-                      textAnchor="middle"
-                      y={NODE_HEIGHT / 2 - 10}
-                      fontSize={11}
-                      fontWeight={600}
-                      fill={lockedOrSoon ? 'var(--text-tertiary)' : 'rgba(255, 255, 255, 0.92)'}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      {badge}
-                    </text>
+                  {/* 总览：电池进度条 + 计数小字 */}
+                  {progress !== null && progress !== undefined ? (
+                    <>
+                      {battery(progress, colored, lockedOrSoon)}
+                      <text
+                        textAnchor="middle"
+                        y={NH / 2 - 19 + 13 / 2 + 3}
+                        fontSize={9.5}
+                        fontWeight={700}
+                        fill="#ffffff"
+                        style={{ paintOrder: 'stroke', pointerEvents: 'none' }}
+                        stroke="rgba(15, 23, 60, 0.4)"
+                        strokeWidth={2}
+                      >
+                        {badgeFor ? badgeFor(node, status) : ''}
+                      </text>
+                    </>
+                  ) : (
+                    textBadge && (
+                      <text
+                        textAnchor="middle"
+                        y={NH / 2 - 10}
+                        fontSize={11}
+                        fontWeight={600}
+                        fill={lockedOrSoon ? 'var(--text-tertiary)' : 'rgba(255, 255, 255, 0.92)'}
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {textBadge}
+                      </text>
+                    )
                   )}
                 </g>
               </g>
