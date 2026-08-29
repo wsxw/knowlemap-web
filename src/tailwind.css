@@ -1,0 +1,5 @@
+/* Tailwind 4 入口：只引入 theme + utilities，不引入 preflight，
+   避免覆盖项目既有手写样式（styles.css）。beUI 等复制式组件的
+   Tailwind 工具类由此文件提供。 */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
