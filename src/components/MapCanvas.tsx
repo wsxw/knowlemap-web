@@ -121,13 +121,9 @@ interface Props {
   activeId?: string | null
   /** 总览模式：节点点击回调（点模块 → 进入该子系统地图） */
   onNodeClick?: (node: KnowledgeNode) => void
-  /** 力导向网状模式：节点位置由物理模拟驱动，节点可拖拽且邻居联动（Obsidian 风格） */
+  /** 力导向模式：节点位置由物理模拟驱动，可拖拽且邻居联动；每个节点以初始布局位为「家」，松手平滑归位 */
   force?: boolean
-  /** force 模式：用户拖拽后布局的持久化键 */
-  storageKey?: string
-  /** force 模式：锚定节点（如「英语」根）——始终固定在初始布局中心，拖动松手后弹回 */
-  anchorId?: string
-  /** force 模式：力学参数覆盖（如更舒展的间距） */
+  /** force 模式：力学参数覆盖（以模块常量传入，保持引用稳定） */
   forceParams?: Partial<ForceParams>
   /** 紧凑节点尺寸（总览用）；不传用默认尺寸 */
   nodeSize?: { w: number; h: number }
@@ -136,7 +132,7 @@ interface Props {
 /** 知识地图：SVG 自绘，圆点网格 + 贝塞尔学习路径 + 游戏风节点 + 平移缩放；总览支持力导向拖拽联动 */
 export default function MapCanvas({
   nodes, statusFor, badgeFor, progressFor, activeId, onNodeClick,
-  force = false, storageKey, anchorId, forceParams, nodeSize,
+  force = false, forceParams, nodeSize,
 }: Props) {
   useAppState() // 订阅进度变化以重绘节点状态
   const containerRef = useRef<HTMLDivElement>(null)
@@ -147,7 +143,10 @@ export default function MapCanvas({
 
   const NW = nodeSize?.w ?? DEFAULT_NODE_W
   const NH = nodeSize?.h ?? DEFAULT_NODE_H
-  const params: ForceParams = { ...DEFAULT_PARAMS, ...forceParams }
+  const params: ForceParams = useMemo(
+    () => ({ ...DEFAULT_PARAMS, ...forceParams }),
+    [forceParams],
+  )
 
   // MARK: 力导向（force 模式）
 
@@ -158,17 +157,13 @@ export default function MapCanvas({
   positionsRef.current = forcePositions
   // 进入页面后的首次沉降：自动适配窗口（之后用户手动拖动的沉降不再打扰视角）
   const initialSettleDone = useRef(false)
+  // 用户手动平移/缩放/拖拽过视口后，不再自动适配（适配按钮可手动触发）
+  const userMovedRef = useRef(false)
   const fitRef = useRef<() => void>(() => {})
   // 拖拽中的节点：钉在光标上，邻居经弹簧联动
   const pinnedRef = useRef<{ id: string; moved: boolean; startX: number; startY: number; content: ForcePoint; node: KnowledgeNode } | null>(null)
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
-
-  /** 锚定节点的默认位置：初始布局的包围盒中心（「英语」永远回到这里） */
-  const anchorCenter = useMemo<ForcePoint>(() => {
-    const rect = contentRect(nodes, NW, NH)
-    return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : { x: 0, y: 0 }
-  }, [nodes, NW, NH])
 
   /** 每步模拟的钉住表：仅拖拽中的节点（跟随光标） */
   const pinnedForSim = useCallback(
@@ -180,24 +175,17 @@ export default function MapCanvas({
     [],
   )
 
-  /** 锚定节点的归位目标（非拖拽时生效），拖拽中让它跟手 */
+  /** 归位目标：force 模式下每个节点以自身初始布局位为家（树形布局不被拖散），拖拽中的节点跟手 */
   const homeSpringsFor = useCallback(
     (dragId: string | null): Record<string, ForcePoint> => {
-      if (!anchorId || dragId === anchorId) return {}
-      return { [anchorId]: anchorCenter }
+      const homes: Record<string, ForcePoint> = {}
+      for (const n of nodesRef.current) {
+        if (n.id !== dragId) homes[n.id] = n.layout
+      }
+      return homes
     },
-    [anchorId, anchorCenter],
+    [],
   )
-
-  const persistPositions = useCallback(() => {
-    if (!force || !storageKey || !simRef.current) return
-    try {
-      const entries = [...simRef.current.positions].filter(([id]) => id !== anchorId)
-      localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries)))
-    } catch {
-      /* 存储不可用则放弃持久化 */
-    }
-  }, [force, storageKey, anchorId])
 
   const ensureLoop = useCallback(() => {
     if (!force || rafRef.current !== undefined) return
@@ -217,47 +205,31 @@ export default function MapCanvas({
         homeSpringsFor(pin?.id ?? null),
       )
       sim.alpha *= 0.985
-      // 锚定节点尚未到家时保持模拟活跃（回中动画不被冷却打断）
-      if (anchorId) {
-        const p = sim.positions.get(anchorId)
-        const home = homeSpringsFor(null)[anchorId]
-        if (p && home && Math.hypot(p.x - home.x, p.y - home.y) > 1.5) {
-          sim.alpha = Math.max(sim.alpha, 0.5)
-        }
-      }
       setForcePositions(Object.fromEntries(sim.positions))
       if (sim.alpha > 0.02 && (move > 0.4 || pin)) {
         rafRef.current = requestAnimationFrame(stepFrame)
       } else {
         rafRef.current = undefined
-        persistPositions()
-        // 首次沉降（进入页面）：自动适配窗口；之后的沉降不干扰用户视角
+        // 首次沉降（进入页面）：自动适配窗口；用户已手动操作视口则不打扰
         if (!initialSettleDone.current) {
           initialSettleDone.current = true
-          fitRef.current()
+          if (!userMovedRef.current) fitRef.current()
         }
       }
     }
     rafRef.current = requestAnimationFrame(stepFrame)
-  }, [force, params, pinnedForSim, homeSpringsFor, anchorId, persistPositions])
+  }, [force, params, pinnedForSim, homeSpringsFor])
 
   useEffect(() => {
     if (!force) return
-    let saved: Record<string, ForcePoint> | undefined
-    try {
-      const raw = JSON.parse(localStorage.getItem(storageKey ?? '') ?? 'null') as Record<string, ForcePoint> | null
-      if (raw) saved = Object.fromEntries(Object.entries(raw).filter(([id]) => id !== anchorId))
-    } catch {
-      saved = undefined
-    }
-    simRef.current = initSim(nodes, saved)
-    if (anchorId) simRef.current.positions.set(anchorId, { ...anchorCenter })
+    simRef.current = initSim(nodes)
+    // 进入时低 alpha 起步：树形家点已就位，只做轻微呼吸后即沉降（拖拽时仍会拉满）
+    simRef.current.alpha = 0.35
     setForcePositions(Object.fromEntries(simRef.current.positions))
     ensureLoop()
     return () => {
       if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current)
       rafRef.current = undefined
-      persistPositions()
     }
     // nodes 随 mapKey 重挂载才变化
   }, [force]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -297,7 +269,9 @@ export default function MapCanvas({
   fitRef.current = fit
 
   useEffect(() => {
-    fit()
+    // 尺寸已知/内容变化即适配：进入页面立刻生效（不等力模拟沉降）；
+    // 用户手动平移缩放过后不再自动拉回视角
+    if (!userMovedRef.current) fit()
   }, [fit])
 
   useLayoutEffect(() => {
@@ -326,7 +300,6 @@ export default function MapCanvas({
       pinnedRef.current = null
       if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.5)
       ensureLoop()
-      persistPositions()
     }
     dragState.current = null
     activePointers.current.clear()
@@ -363,7 +336,10 @@ export default function MapCanvas({
     // force 模式：拖拽节点（钉住 + 邻居联动），优先于画布平移
     const pin = pinnedRef.current
     if (pin) {
-      if (Math.hypot(e.clientX - pin.startX, e.clientY - pin.startY) > 4) pin.moved = true
+      if (!pin.moved && Math.hypot(e.clientX - pin.startX, e.clientY - pin.startY) > 4) {
+        pin.moved = true
+        userMovedRef.current = true
+      }
       pin.content = toContent(e.clientX, e.clientY)
       if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.9)
       ensureLoop()
@@ -381,6 +357,7 @@ export default function MapCanvas({
       const { baseDist, base } = pinchState.current
       const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, base.scale * (dist / baseDist)))
       const k = scale / base.scale
+      userMovedRef.current = true
       setViewport({
         scale,
         tx: midX - (midX - base.tx) * k,
@@ -395,25 +372,20 @@ export default function MapCanvas({
     const dy = e.clientY - d.startY
     if (!d.moved && Math.hypot(dx, dy) > 4) d.moved = true
     if (d.moved) {
+      userMovedRef.current = true
       setViewport((v) => ({ ...v, tx: d.baseTx + dx, ty: d.baseTy + dy }))
     }
   }
 
   /** 只有按住指针的拖拽才平移；松手一律结束拖拽状态 */
   const onPointerUp = (e: React.PointerEvent) => {
-    // force：松开被拖拽的节点 → 解除拖拽钉住、回弹沉降并持久化；未移动视为点击
-    // （锚定节点随后会被 pinnedForSim 拉回中心）
+    // force：松开被拖拽的节点 → 解除拖拽钉住并回弹归位；未移动视为点击
     if (pinnedRef.current) {
       const { moved, node } = pinnedRef.current
       pinnedRef.current = null
       if (simRef.current) simRef.current.alpha = Math.max(simRef.current.alpha, 0.9)
       ensureLoop()
-      if (!moved) {
-        persistPositions()
-        onNodeClick?.(node)
-      } else {
-        persistPositions()
-      }
+      if (!moved) onNodeClick?.(node)
       return
     }
     activePointers.current.delete(e.pointerId)
@@ -435,8 +407,9 @@ export default function MapCanvas({
     }
   }
 
-  /** 以光标为锚点缩放 */
+  /** 以光标为锚点缩放（滚轮 / 缩放按钮，均属用户手动操作） */
   const zoomAt = (clientX: number, clientY: number, factor: number) => {
+    userMovedRef.current = true
     const el = containerRef.current
     if (!el) return
     const bounds = el.getBoundingClientRect()

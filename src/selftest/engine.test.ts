@@ -183,14 +183,14 @@ describe('填空答案归一化', () => {
 describe('总览地图构建与聚合状态', () => {
   const pack = makePack()
 
-  it('根「英语」扇出指向全部模块，跨模块前置聚合为模块边', () => {
+  it('树形总览：根在底部，每个模块单一父节点（功能挂在语法下）', () => {
     const nodes = buildOverviewNodes(pack)
     expect(nodes[0].id).toBe('en')
     expect(nodes[0].prerequisites).toEqual([])
     const grammar = nodes.find((n) => n.id === 'grammar')!
     expect(grammar.prerequisites).toEqual(['en'])
     const functions = nodes.find((n) => n.id === 'functions')!
-    expect(functions.prerequisites).toEqual(['en', 'grammar'])
+    expect(functions.prerequisites).toEqual(['grammar'])
   })
 
   it('聚合状态：未开始=可学习/未解锁，部分点亮=进行中，全点亮=已掌握', () => {

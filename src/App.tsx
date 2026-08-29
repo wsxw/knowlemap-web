@@ -13,12 +13,17 @@ import {
 } from './content/overviewMap'
 import { allModules, type NodeStatus } from './domain/models'
 import { hashFor, parseHash } from './routing'
+import type { ForceParams } from './components/forceLayout'
 
 const DETAIL_WIDTH_KEY = 'knowlemap.detailWidth.v1'
 const THEME_KEY = 'knowlemap.theme.v1'
 const DETAIL_MIN = 380
 const DETAIL_MAX = 760
 const MOBILE_QUERY = '(max-width: 1080px)'
+
+/** 总览树形布局的力学参数：向心力关闭（树形位置由家点弹簧保证），间距贴合树层距。
+ *  模块常量保持引用稳定，避免 MapCanvas 的 memo/回调反复失效。 */
+const OVERVIEW_FORCE_PARAMS: Partial<ForceParams> = { restLength: 220, repulsion: 30000, gravity: 0 }
 
 type Theme = 'light' | 'dark'
 
@@ -264,9 +269,7 @@ export default function App() {
             key={mapKey}
             nodes={overviewNodes}
             force
-            storageKey="knowlemap.overviewLayout.v1"
-            anchorId={OVERVIEW_ROOT_ID}
-            forceParams={{ restLength: 268, repulsion: 36000 }}
+            forceParams={OVERVIEW_FORCE_PARAMS}
             nodeSize={{ w: 148, h: 56 }}
             statusFor={(node) => overviewStatuses.get(node.id) ?? 'locked'}
             badgeFor={(node) => overviewBadgeFor(node)}
@@ -284,7 +287,18 @@ export default function App() {
             }}
           />
         ) : currentMap ? (
-          <MapCanvas key={mapKey} nodes={filteredNodes} />
+          <MapCanvas
+            key={mapKey}
+            nodes={filteredNodes}
+            onNodeClick={(node) => {
+              if (state.selectedNodeId === node.id) {
+                // 同一节点再次点击（移动端返回地图后再点）：直接重新滑出详情
+                setDetailOpen(true)
+              } else {
+                appModel.selectNode(node.id)
+              }
+            }}
+          />
         ) : (
           <div className="map-empty">请从左侧选择子系统</div>
         )}

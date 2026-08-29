@@ -15,49 +15,30 @@ import * as engine from '../domain/learningEngine'
 export const OVERVIEW_ID = 'overview'
 export const OVERVIEW_ROOT_ID = 'en'
 
-/** 总览初始坐标：英语居中、模块环绕——力导向模拟从这个对称起点收敛成网状 */
-const OVERVIEW_LAYOUT: Record<string, Point2> = (() => {
-  const layout: Record<string, Point2> = { [OVERVIEW_ROOT_ID]: { x: 420, y: 300 } }
-  const moduleIds = ['grammar', 'vocabulary', 'pronunciation', 'functions', 'discourse', 'skills']
-  const radius = 190
-  moduleIds.forEach((id, i) => {
-    const angle = (Math.PI * 2 * i) / moduleIds.length - Math.PI / 2 // 第一个从正上方开始
-    layout[id] = {
-      x: Math.round(420 + radius * Math.cos(angle)),
-      y: Math.round(300 + radius * Math.sin(angle)),
-    }
-  })
-  return layout
-})()
-
-function layoutFor(id: string, index: number): Point2 {
-  return OVERVIEW_LAYOUT[id] ?? { x: 400, y: 120 + index * 110 }
+/** 总览树形布局：「英语」在底部，模块按重要关系向上生长（像一棵树）：
+ *  根上一层是地基三科（语法/词汇/发音），其上是功能（用语法的句子表达意思），
+ *  顶端是语篇与技能（组句成篇、综合听说读写能力）。y 向上为负。 */
+const OVERVIEW_TREE: Record<string, { parent: string; x: number; y: number }> = {
+  grammar: { parent: OVERVIEW_ROOT_ID, x: -210, y: -175 },
+  vocabulary: { parent: OVERVIEW_ROOT_ID, x: 0, y: -175 },
+  pronunciation: { parent: OVERVIEW_ROOT_ID, x: 210, y: -175 },
+  functions: { parent: 'grammar', x: 0, y: -350 },
+  discourse: { parent: 'functions', x: -130, y: -525 },
+  skills: { parent: 'functions', x: 130, y: -525 },
 }
 
-/** 跨模块前置聚合：模块 A 的节点是模块 B 节点的前置 → B 的入边集合里记 A（B→A 查询） */
-function crossModuleEdges(pack: ContentPack): Map<string, Set<string>> {
-  const moduleOf = new Map<string, string>()
-  for (const module of allModules(pack)) {
-    for (const s of module.subsystems) {
-      for (const n of s.nodes) moduleOf.set(n.id, module.id)
-    }
-  }
-  const incoming = new Map<string, Set<string>>()
-  for (const module of allModules(pack)) {
-    for (const s of module.subsystems) {
-      for (const n of s.nodes) {
-        const targetModule = moduleOf.get(n.id)!
-        for (const pre of n.prerequisites) {
-          const preModule = moduleOf.get(pre)
-          if (preModule && preModule !== targetModule) {
-            if (!incoming.has(targetModule)) incoming.set(targetModule, new Set())
-            incoming.get(targetModule)!.add(preModule)
-          }
-        }
-      }
-    }
-  }
-  return incoming
+const ROOT_POS: Point2 = { x: 0, y: 0 }
+
+function treeEntryFor(id: string, index: number): { parent: string; pos: Point2 } {
+  const entry = OVERVIEW_TREE[id]
+  if (entry) return { parent: entry.parent, pos: { x: entry.x, y: entry.y } }
+  // 未收录的模块兜底：英语直连，顶部一行依次排开
+  return { parent: OVERVIEW_ROOT_ID, pos: { x: -200 + (index % 5) * 100, y: -700 } }
+}
+
+function layoutFor(id: string, index: number): Point2 {
+  if (id === OVERVIEW_ROOT_ID) return { ...ROOT_POS }
+  return treeEntryFor(id, index).pos
 }
 
 function dummyExtras(): Pick<KnowledgeNode, 'organizer' | 'explanation' | 'activity' | 'quiz' | 'related'> {
@@ -70,9 +51,8 @@ function dummyExtras(): Pick<KnowledgeNode, 'organizer' | 'explanation' | 'activ
   }
 }
 
-/** 构建总览节点：根「英语」扇出指向全部模块，另叠加真实跨模块前置边 */
+/** 构建总览节点：树形结构，每个模块一个父节点（根「英语」在最底部） */
 export function buildOverviewNodes(pack: ContentPack): KnowledgeNode[] {
-  const edges = crossModuleEdges(pack)
   const rootNode: KnowledgeNode = {
     id: OVERVIEW_ROOT_ID,
     title: '🇬🇧 英语',
@@ -85,8 +65,8 @@ export function buildOverviewNodes(pack: ContentPack): KnowledgeNode[] {
     id: module.id,
     title: module.name,
     level: [],
-    // 从主题根扇出 + 真实跨模块前置（如 语法→功能→技能）
-    prerequisites: [OVERVIEW_ROOT_ID, ...(edges.get(module.id) ?? [])],
+    // 树形：单一父节点（英语扇出到地基三科，其上按 语法→功能→语篇/技能 生长）
+    prerequisites: [treeEntryFor(module.id, i).parent],
     layout: layoutFor(module.id, i),
     ...dummyExtras(),
   }))

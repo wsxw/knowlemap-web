@@ -73,7 +73,7 @@ export function simulateStep(
   edges: ForceEdge[],
   params: ForceParams = DEFAULT_PARAMS,
   pinned: Record<string, ForcePoint> = {},
-  /** 归位弹簧：节点平滑缓动回家的目标点（如「英语」根节点的画布中心），非硬钉 */
+  /** 归位弹簧：节点平滑缓动回家（force 模式下每个节点回到自身初始布局位），非硬钉 */
   homeSprings: Record<string, ForcePoint> = {},
 ): number {
   const { positions, velocities } = state
@@ -150,8 +150,10 @@ export function simulateStep(
     }
     const f = forces.get(id)!
     const v = velocities.get(id)!
-    v.x = (v.x + f.x - (p.x - cx) * params.gravity) * params.damping
-    v.y = (v.y + f.y - (p.y - cy) * params.gravity) * params.damping
+    // 力注入随 alpha 衰减：冷却后期力趋近 0，配合归位弹簧让节点精确停在家点，
+    // 而不是停在「物理与家点妥协」的偏移位置（树形布局需要确定的最终形态）
+    v.x = (v.x + f.x * state.alpha - (p.x - cx) * params.gravity) * params.damping
+    v.y = (v.y + f.y * state.alpha - (p.y - cy) * params.gravity) * params.damping
     let dx = v.x * state.alpha
     let dy = v.y * state.alpha
     const mag = Math.hypot(dx, dy)
